@@ -140,7 +140,10 @@ export function LinkBoard({ groups }: Props) {
       setLinkAddBar({ kind: "error", message: res.error });
       return false;
     }
-    setLinkAddBar({ kind: "success", folderName: res.data.groupName });
+    setLinkAddBar({
+      kind: "success",
+      folderName: res.data?.groupName ?? "Folder",
+    });
     startTransition(() => {
       router.refresh();
     });
