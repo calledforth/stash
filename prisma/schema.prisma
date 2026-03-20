@@ -1,0 +1,35 @@
+// https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Group {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  links     Link[]
+
+  @@map("groups")
+}
+
+model Link {
+  id          String   @id @default(cuid())
+  url         String
+  title       String?
+  description String?
+  faviconUrl  String?
+  groupId     String
+  group       Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@index([groupId])
+  @@map("links")
+}
