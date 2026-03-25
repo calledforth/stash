@@ -48,6 +48,8 @@ export async function addLinkAction(
   });
 
   let groupId: string;
+  let decisionTitle = meta.title;
+  let titleSource: "ai" | "metadata" = "metadata";
 
   const hasGroq = Boolean(process.env.GROQ_API_KEY?.trim());
 
@@ -57,6 +59,10 @@ export async function addLinkAction(
     try {
       const decision = await categorizeLink({
         url,
+        resolvedUrl: meta.resolvedUrl,
+        domain: meta.domain,
+        sourceType: meta.sourceType,
+        sourceCreator: meta.sourceCreator,
         title: meta.title,
         description: meta.description,
         groups,
@@ -69,20 +75,33 @@ export async function addLinkAction(
         });
         groupId = g.id;
       }
+      decisionTitle = decision.linkTitle;
+      titleSource = "ai";
     } catch {
       groupId = await ensureInboxGroupId();
     }
   }
 
-  const link = await prisma.link.create({
-    data: {
-      url,
-      title: meta.title,
-      description: meta.description,
-      faviconUrl: meta.faviconUrl,
-      groupId,
-    },
-  });
+  const linkBaseData = {
+    url,
+    title: decisionTitle,
+    description: meta.description,
+    faviconUrl: meta.faviconUrl,
+    groupId,
+  };
+
+  let link;
+  try {
+    link = await prisma.link.create({
+      data: {
+        ...linkBaseData,
+        ...(titleSource ? { titleSource } : {}),
+      },
+    });
+  } catch {
+    // Backward compatibility when Prisma client/schema is not updated yet.
+    link = await prisma.link.create({ data: linkBaseData });
+  }
 
   await prisma.group.update({
     where: { id: groupId },

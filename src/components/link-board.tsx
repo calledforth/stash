@@ -6,6 +6,7 @@ import {
   deleteGroupAction,
   moveLinksToGroupAction,
   removeLinksAction,
+  regenerateGroupTitleAction,
   renameGroupAction,
 } from "@/app/actions";
 import { UNCATEGORIZED_FOLDER_NAME } from "@/lib/links";
@@ -20,6 +21,7 @@ import {
   type AddLinkBarState,
 } from "@/components/AddLinkStatusBar";
 import { CopiedToast } from "@/components/CopiedToast";
+import { FolderRegeneratedToast } from "@/components/FolderRegeneratedToast";
 import { FolderSidebar } from "@/components/FolderSidebar";
 import { LinkCard } from "@/components/LinkCard";
 import { SelectionBar } from "@/components/SelectionBar";
@@ -42,6 +44,8 @@ export function LinkBoard({ groups }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
+  const [regeneratingFolderId, setRegeneratingFolderId] = useState<string | null>(null);
+  const [showRegeneratedToast, setShowRegeneratedToast] = useState(false);
 
   const uncategorizedId = useMemo(
     () => groups.find((g) => g.name === UNCATEGORIZED_FOLDER_NAME)?.id,
@@ -124,6 +128,12 @@ export function LinkBoard({ groups }: Props) {
       if (copiedToastTimerRef.current) clearTimeout(copiedToastTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showRegeneratedToast) return;
+    const t = window.setTimeout(() => setShowRegeneratedToast(false), 2500);
+    return () => clearTimeout(t);
+  }, [showRegeneratedToast]);
 
   function notifyLinkCopied() {
     setCopiedToast(true);
@@ -210,6 +220,21 @@ export function LinkBoard({ groups }: Props) {
                   return res.ok ? { ok: true } : { ok: false, error: res.error };
                 })
               }
+              onRegenerateFolder={(id) => {
+                setBanner(null);
+                setRegeneratingFolderId(id);
+                startTransition(async () => {
+                  const res = await regenerateGroupTitleAction(id);
+                  setRegeneratingFolderId(null);
+                  if (!res.ok) {
+                    setBanner(res.error ?? "Could not regenerate folder title");
+                    return;
+                  }
+                  setShowRegeneratedToast(true);
+                  router.refresh();
+                });
+              }}
+              regeneratingFolderId={regeneratingFolderId}
               onDeleteFolder={(id) =>
                 runAction(async () => {
                   if (activeFilter === id) setActiveFilter("all");
@@ -316,6 +341,16 @@ export function LinkBoard({ groups }: Props) {
                   })
                 }
                 onClear={() => setSelectedIds(new Set())}
+                onCopyAll={() => {
+                  const urls = rows
+                    .filter((r) => selectedIds.has(r.link.id))
+                    .map((r) => r.link.url);
+                  if (urls.length > 0) {
+                    navigator.clipboard.writeText(urls.join("\n")).then(() => {
+                      notifyLinkCopied();
+                    });
+                  }
+                }}
               />
             )}
           </AnimatePresence>
@@ -330,6 +365,9 @@ export function LinkBoard({ groups }: Props) {
           </AnimatePresence>
           <AnimatePresence>
             {copiedToast && <CopiedToast key="copied-toast" />}
+          </AnimatePresence>
+          <AnimatePresence>
+            {showRegeneratedToast && <FolderRegeneratedToast key="folder-regenerated-toast" />}
           </AnimatePresence>
         </div>
       </div>

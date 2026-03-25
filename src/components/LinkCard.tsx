@@ -8,7 +8,7 @@ import { Check, Copy, ExternalLink } from "lucide-react";
 import { motion } from "framer-motion";
 
 type LinkCardProps = {
-  link: Link;
+  link: Link & { titleSource?: string | null };
   folder?: Folder;
   selected: boolean;
   onToggleSelect: (id: string) => void;
@@ -57,22 +57,22 @@ export const LinkCard = forwardRef<HTMLDivElement, LinkCardProps>(
           opacity: { duration: 0.14 },
         }}
         onClick={() => onToggleSelect(link.id)}
-        className={`group flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 transition-colors ${
+        className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-all duration-150 ${
           selected
-            ? "border border-selection-border bg-selection"
-            : "border border-transparent hover:bg-secondary/50"
+            ? "bg-white/[0.04] ring-1 ring-inset ring-white/10"
+            : "hover:bg-white/[0.03]"
         }`}
       >
         <div
-          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-colors ${
+          className={`flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded transition-all duration-150 ${
             selected
-              ? "border-accent bg-accent"
-              : "border-muted-foreground/30 group-hover:border-muted-foreground/60"
+              ? "border border-white/25 bg-accent"
+              : "border border-white/15 group-hover:border-white/30"
           }`}
         >
           {selected && (
             <svg
-              className="h-3.5 w-3.5 text-accent-foreground"
+              className="h-2.5 w-2.5 text-white"
               viewBox="0 0 10 10"
               fill="none"
               aria-hidden
@@ -80,7 +80,7 @@ export const LinkCard = forwardRef<HTMLDivElement, LinkCardProps>(
               <path
                 d="M2 5.5L4 7.5L8 3"
                 stroke="currentColor"
-                strokeWidth="2.25"
+                strokeWidth="1.75"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -105,6 +105,14 @@ export const LinkCard = forwardRef<HTMLDivElement, LinkCardProps>(
             <span className="truncate text-sm font-medium text-foreground">
               {title}
             </span>
+            {link.titleSource === "metadata" && (
+              <span
+                className="shrink-0 rounded-full border border-muted-foreground/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                title="Metadata title"
+              >
+                Meta
+              </span>
+            )}
             <span className="truncate text-xs text-muted-foreground">
               {extractDomain(link.url)}
             </span>

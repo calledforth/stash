@@ -2,7 +2,7 @@
 
 import type { Folder } from "@/lib/links-types";
 import { dockBarShell, dockDropdownSurface } from "@/lib/dock-bar-surface";
-import { FolderInput, FolderPlus, Trash2, X } from "lucide-react";
+import { ClipboardCopy, FolderInput, FolderPlus, Trash2, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
@@ -13,6 +13,7 @@ type SelectionBarProps = {
   onCreateFolderAndMove: (name: string) => void;
   onRemove: () => void;
   onClear: () => void;
+  onCopyAll?: () => void;
 };
 
 export function SelectionBar({
@@ -22,22 +23,35 @@ export function SelectionBar({
   onCreateFolderAndMove,
   onRemove,
   onClear,
+  onCopyAll,
 }: SelectionBarProps) {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const moveMenuRef = useRef<HTMLDivElement>(null);
+  const newFolderRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) {
-        setShowNewFolder(false);
+      if (
+        showMoveMenu &&
+        moveMenuRef.current &&
+        !moveMenuRef.current.contains(e.target as Node)
+      ) {
         setShowMoveMenu(false);
+      }
+      if (
+        showNewFolder &&
+        newFolderRef.current &&
+        !newFolderRef.current.contains(e.target as Node)
+      ) {
+        setShowNewFolder(false);
       }
     }
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, []);
+  }, [showMoveMenu, showNewFolder]);
 
   function handleCreateFolder() {
     if (newFolderName.trim()) {
@@ -59,101 +73,134 @@ export function SelectionBar({
     >
       <div className={dockBarShell}>
         <div className="flex items-center gap-2 px-3.5 py-2 text-xs text-card-foreground">
-        <span className="font-medium tabular-nums">{count} selected</span>
-        <div className="h-3.5 w-px bg-border" />
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => {
-              setShowMoveMenu(!showMoveMenu);
-              setShowNewFolder(false);
-            }}
-            className="flex items-center gap-1 transition-colors hover:text-foreground"
-          >
-            <FolderInput className="h-3 w-3" />
-            Move to
-          </button>
-          {showMoveMenu && (
-            <div
-              className={`absolute bottom-full left-0 mb-2 min-w-[180px] ${dockDropdownSurface}`}
+          <span className="font-medium tabular-nums">{count} selected</span>
+          <div className="h-3.5 w-px bg-border" />
+
+          {/* Move to */}
+          <div className="relative" ref={moveMenuRef}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMoveMenu((v) => !v);
+                setShowNewFolder(false);
+              }}
+              className="flex items-center gap-1 transition-colors hover:text-foreground"
             >
-              {folders.map((f) => (
+              <FolderInput className="h-3 w-3" />
+              Move to
+            </button>
+            {showMoveMenu && (
+              <div
+                className={`absolute bottom-full left-0 z-50 mb-2 min-w-[180px] ${dockDropdownSurface}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {folders.length === 0 && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground italic">
+                    No folders yet
+                  </div>
+                )}
+                {folders.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => {
+                      onMoveToFolder(f.id);
+                      setShowMoveMenu(false);
+                    }}
+                    className="w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                  >
+                    {f.name}
+                  </button>
+                ))}
+                {folders.length > 0 && <div className="my-1 h-px bg-border" />}
                 <button
-                  key={f.id}
                   type="button"
                   onClick={() => {
-                    onMoveToFolder(f.id);
+                    onMoveToFolder("");
                     setShowMoveMenu(false);
                   }}
-                  className="w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                  className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
-                  {f.name}
+                  Uncategorized
                 </button>
-              ))}
-              {folders.length > 0 && <div className="my-1 h-px bg-border" />}
-              <button
-                type="button"
-                onClick={() => {
-                  onMoveToFolder("");
-                  setShowMoveMenu(false);
-                }}
-                className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              </div>
+            )}
+          </div>
+
+          {/* New folder */}
+          <div className="relative" ref={newFolderRef}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowNewFolder((v) => !v);
+                setShowMoveMenu(false);
+              }}
+              className="flex items-center gap-1 transition-colors hover:text-foreground"
+            >
+              <FolderPlus className="h-3 w-3" />
+              New folder
+            </button>
+            {showNewFolder && (
+              <div
+                className={`absolute bottom-full left-0 z-50 mb-2 min-w-[220px] p-2 ${dockDropdownSurface}`}
+                onClick={(e) => e.stopPropagation()}
               >
-                Uncategorized
-              </button>
-            </div>
+                <input
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
+                  placeholder="Folder name…"
+                  className="w-full rounded-md bg-secondary px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateFolder}
+                  disabled={!newFolderName.trim()}
+                  className="mt-1.5 w-full rounded-md bg-accent px-2 py-1.5 text-xs text-accent-foreground transition-colors hover:bg-accent/90 disabled:opacity-40"
+                >
+                  Create & move
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="h-3.5 w-px bg-border" />
+
+          {/* Copy all links */}
+          {onCopyAll && (
+            <button
+              type="button"
+              onClick={onCopyAll}
+              className="flex items-center gap-1 transition-colors hover:text-foreground"
+              title="Copy selected links"
+            >
+              <ClipboardCopy className="h-3 w-3" />
+              Copy
+            </button>
           )}
-        </div>
-        <div className="relative">
+
+          {/* Delete */}
           <button
             type="button"
-            onClick={() => {
-              setShowNewFolder(!showNewFolder);
-              setShowMoveMenu(false);
-            }}
-            className="flex items-center gap-1 transition-colors hover:text-foreground"
+            onClick={onRemove}
+            className="flex items-center gap-1 transition-colors hover:text-destructive"
+            title="Delete selected"
           >
-            <FolderPlus className="h-3 w-3" />
-            New folder
+            <Trash2 className="h-3 w-3" />
           </button>
-          {showNewFolder && (
-            <div
-              className={`absolute bottom-full left-0 mb-2 min-w-[200px] p-1.5 ${dockDropdownSurface}`}
-            >
-              <input
-                autoFocus
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
-                placeholder="Folder name..."
-                className="w-full rounded-md bg-secondary px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground"
-              />
-              <button
-                type="button"
-                onClick={handleCreateFolder}
-                disabled={!newFolderName.trim()}
-                className="mt-1.5 w-full rounded-md bg-accent px-2 py-1.5 text-xs text-accent-foreground transition-colors hover:bg-accent/90 disabled:opacity-40"
-              >
-                Create & move
-              </button>
-            </div>
-          )}
-        </div>
-        <div className="h-3.5 w-px bg-border" />
-        <button
-          type="button"
-          onClick={onRemove}
-          className="flex items-center gap-1 transition-colors hover:text-destructive"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          onClick={onClear}
-          className="rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <X className="h-3 w-3" />
-        </button>
+
+          {/* Close */}
+          <button
+            type="button"
+            onClick={onClear}
+            className="rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="Clear selection"
+          >
+            <X className="h-3 w-3" />
+          </button>
         </div>
       </div>
     </motion.div>

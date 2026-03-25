@@ -1,7 +1,7 @@
 "use client";
 
 import type { Folder } from "@/lib/links-types";
-import { FolderIcon, Inbox, Layers, Pencil, Trash2 } from "lucide-react";
+import { FolderIcon, Inbox, Layers, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 type FolderSidebarProps = {
@@ -10,6 +10,8 @@ type FolderSidebarProps = {
   onFilterChange: (filter: string) => void;
   folderCounts: Record<string, number>;
   onRenameFolder: (id: string, name: string) => void;
+  onRegenerateFolder: (id: string) => void;
+  regeneratingFolderId?: string | null;
   onDeleteFolder: (id: string) => void;
 };
 
@@ -19,10 +21,13 @@ export function FolderSidebar({
   onFilterChange,
   folderCounts,
   onRenameFolder,
+  onRegenerateFolder,
+  regeneratingFolderId,
   onDeleteFolder,
 }: FolderSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
+  const [menuFolderId, setMenuFolderId] = useState<string | null>(null);
 
   function startRename(folder: Folder) {
     setEditingId(folder.id);
@@ -127,24 +132,62 @@ export function FolderSidebar({
           ) : (
             <span className="flex-1 truncate text-left">{folder.name}</span>
           )}
-          <div className="hidden items-center gap-0.5 group-hover:flex">
+          <div className="relative hidden items-center gap-0.5 group-hover:flex">
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                startRename(folder);
+                setMenuFolderId((prev) => (prev === folder.id ? null : folder.id));
               }}
-              className="rounded p-0.5 hover:bg-muted"
+              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+              title="Folder actions"
             >
               <Pencil className="h-3 w-3" />
             </button>
+            {menuFolderId === folder.id && (
+              <div
+                className="absolute right-8 top-0 z-20 flex min-w-[120px] flex-col rounded-lg border border-white/10 bg-neutral-800/95 p-1 shadow-xl backdrop-blur-md"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuFolderId(null);
+                    startRename(folder);
+                  }}
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.06] hover:text-foreground"
+                >
+                  <Pencil className="h-3 w-3" />
+                  Manual
+                </button>
+                <button
+                  type="button"
+                  disabled={regeneratingFolderId === folder.id}
+                  onClick={() => {
+                    setMenuFolderId(null);
+                    onRegenerateFolder(folder.id);
+                  }}
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Sparkles
+                    className={`h-3 w-3 ${
+                      regeneratingFolderId === folder.id ? "animate-spin" : ""
+                    }`}
+                  />
+                  {regeneratingFolderId === folder.id
+                    ? "Working…"
+                    : "Use AI"}
+                </button>
+              </div>
+            )}
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
+                setMenuFolderId(null);
                 onDeleteFolder(folder.id);
               }}
-              className="rounded p-0.5 text-destructive hover:bg-destructive/10"
+              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
             >
               <Trash2 className="h-3 w-3" />
             </button>

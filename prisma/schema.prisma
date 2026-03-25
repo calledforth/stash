@@ -24,6 +24,7 @@ model Link {
   id          String   @id @default(cuid())
   url         String
   title       String?
+  titleSource String   @default("metadata")
   description String?
   faviconUrl  String?
   groupId     String
