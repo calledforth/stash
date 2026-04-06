@@ -11,7 +11,7 @@ import {
 } from "@/app/actions";
 import { UNCATEGORIZED_FOLDER_NAME } from "@/lib/links";
 import type { Group, Link } from "@prisma/client";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { Search } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
@@ -102,20 +102,6 @@ export function LinkBoard({ groups }: Props) {
     }
     return list;
   }, [groups, activeFilter, search, uncategorizedId]);
-
-  const [emptyVisible, setEmptyVisible] = useState(() => rows.length === 0);
-  const rowsLengthRef = useRef(rows.length);
-
-  useEffect(() => {
-    rowsLengthRef.current = rows.length;
-    if (rows.length === 0) return;
-
-    const frame = requestAnimationFrame(() => {
-      setEmptyVisible(false);
-    });
-
-    return () => cancelAnimationFrame(frame);
-  }, [rows.length]);
 
   useEffect(() => {
     if (!linkAddBar || linkAddBar.kind === "adding") return;
@@ -261,46 +247,29 @@ export function LinkBoard({ groups }: Props) {
             </div>
 
             <div className="relative flex flex-col">
-              <AnimatePresence
-                initial={false}
-                mode="popLayout"
-                onExitComplete={() => {
-                  if (rowsLengthRef.current === 0) setEmptyVisible(true);
-                }}
-              >
-                {rows.map(({ link, group }) => (
-                  <LinkCard
-                    key={link.id}
-                    link={link}
-                    folder={
-                      uncategorizedId && group.id === uncategorizedId
-                        ? undefined
-                        : { id: group.id, name: group.name }
-                    }
-                    selected={selectedIds.has(link.id)}
-                    onToggleSelect={toggleSelect}
-                    onCopied={notifyLinkCopied}
-                  />
-                ))}
-              </AnimatePresence>
+              {rows.map(({ link, group }) => (
+                <LinkCard
+                  key={link.id}
+                  link={link}
+                  folder={
+                    uncategorizedId && group.id === uncategorizedId
+                      ? undefined
+                      : { id: group.id, name: group.name }
+                  }
+                  selected={selectedIds.has(link.id)}
+                  onToggleSelect={toggleSelect}
+                  onCopied={notifyLinkCopied}
+                />
+              ))}
             </div>
 
-            <AnimatePresence>
-              {emptyVisible && (
-                <motion.div
-                  key="empty"
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -6 }}
-                  transition={{ duration: 0.15 }}
-                  className="py-12 text-center text-sm text-muted-foreground"
-                >
-                  {totalLinkCount === 0
-                    ? "Paste your first link above to get started."
-                    : "No links match your filter."}
-                </motion.div>
-              )}
-            </AnimatePresence>
+            {rows.length === 0 && (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                {totalLinkCount === 0
+                  ? "Paste your first link above to get started."
+                  : "No links match your filter."}
+              </div>
+            )}
           </div>
         </div>
       </div>
