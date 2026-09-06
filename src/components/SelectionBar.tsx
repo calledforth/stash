@@ -2,7 +2,15 @@
 
 import type { Folder } from "@/lib/links-types";
 import { dockBarShell, dockDropdownSurface } from "@/lib/dock-bar-surface";
-import { ClipboardCopy, FolderInput, FolderPlus, Trash2, X } from "lucide-react";
+import {
+  ClipboardCopy,
+  FolderInput,
+  FolderPlus,
+  Loader2,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 
@@ -11,6 +19,8 @@ type SelectionBarProps = {
   folders: Folder[];
   onMoveToFolder: (folderId: string) => void;
   onCreateFolderAndMove: (name: string) => void;
+  onOrganize: () => void;
+  organizing?: boolean;
   onRemove: () => void;
   onClear: () => void;
   onCopyAll?: () => void;
@@ -21,6 +31,8 @@ export function SelectionBar({
   folders,
   onMoveToFolder,
   onCreateFolderAndMove,
+  onOrganize,
+  organizing,
   onRemove,
   onClear,
   onCopyAll,
@@ -127,6 +139,27 @@ export function SelectionBar({
               </div>
             )}
           </div>
+
+          {/* Let AI organize */}
+          <button
+            type="button"
+            disabled={organizing}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMoveMenu(false);
+              setShowNewFolder(false);
+              onOrganize();
+            }}
+            className="flex items-center gap-1 transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            title="Let the AI file these into folders"
+          >
+            {organizing ? (
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            ) : (
+              <Sparkles className="h-3 w-3" aria-hidden />
+            )}
+            {organizing ? "Organizing…" : "Let AI organize"}
+          </button>
 
           {/* New folder */}
           <div className="relative" ref={newFolderRef}>
