@@ -50,9 +50,12 @@ async function fetchYouTubeOEmbed(url: string): Promise<YouTubeOEmbed | null> {
   }
 }
 
-export async function fetchLinkMetadata(url: string): Promise<LinkMetadata> {
+export async function fetchLinkMetadata(
+  url: string,
+  options: { timeoutMs?: number } = {},
+): Promise<LinkMetadata> {
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 12_000);
+  const t = setTimeout(() => controller.abort(), options.timeoutMs ?? 12_000);
   try {
     const res = await fetch(url, {
       redirect: "follow",

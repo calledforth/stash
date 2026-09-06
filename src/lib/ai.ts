@@ -247,8 +247,16 @@ Return ONLY valid JSON: {"groupName":"<name>"}`;
   return groupName;
 }
 
-
 export type ReclusterFolder = { folderName: string; linkIndexes: number[] };
+
+export type ReclusterResult = {
+  folders: ReclusterFolder[];
+  /**
+   * 1-based link index -> AI-written display title. Only populated when
+   * `withTitles` is set; otherwise always empty.
+   */
+  titles: Map<number, string>;
+};
 
 /**
  * Re-cluster a set of links in one shot. Links are addressed by 1-based index
@@ -262,19 +270,24 @@ export type ReclusterFolder = { folderName: string; linkIndexes: number[] };
  *   links into the folders that already exist, only inventing new ones when
  *   nothing fits. Otherwise sorting 5 stray links would spawn 5 new near-
  *   duplicate folders alongside the real ones.
+ *
+ * `withTitles` additionally asks for a display title per link. It exists so a
+ * paste of 40 URLs costs one Groq call instead of 40 `categorizeLink` calls that
+ * would each see a stale folder list and race each other into near-duplicates.
  */
 export async function reclusterLinks(
   links: Pick<Link, "url" | "title" | "description">[],
-  options: { existingFolders?: string[] } = {},
-): Promise<ReclusterFolder[]> {
+  options: { existingFolders?: string[]; withTitles?: boolean } = {},
+): Promise<ReclusterResult> {
   const groq = getGroq();
   if (!groq) throw new Error("GROQ_API_KEY is not set");
-  if (!links.length) return [];
+  if (!links.length) return { folders: [], titles: new Map() };
 
   const existing = (options.existingFolders ?? []).filter(
     (n) => n && n !== FALLBACK_UNSORTED,
   );
   const scoped = existing.length > 0;
+  const withTitles = options.withTitles === true;
 
   const lines = links
     .map((l, i) => {
@@ -302,6 +315,16 @@ existing organization — you are replacing it.`;
     : `- Aim for folders of roughly 3+ bookmarks. Prefer a smaller number of meaningful
   folders over many near-duplicate ones. Merge topics that clearly overlap.`;
 
+  const titleRules = withTitles
+    ? `
+- Also write a concise display title for every bookmark, keyed by its number.
+  Make it specific and under 90 characters. Never just echo the bare domain.`
+    : "";
+
+  const responseShape = withTitles
+    ? `{"folders":[{"folderName":"<name>","linkIndexes":[1,2,3]}],"titles":{"1":"<title>","2":"<title>"}}`
+    : `{"folders":[{"folderName":"<name>","linkIndexes":[1,2,3]}]}`;
+
   const prompt = `${intro}
 
 Below are ${links.length} bookmarks, numbered 1 to ${links.length}.
@@ -317,10 +340,10 @@ ${modeRules}
   the contents from the name alone.
 - Avoid vague names like "Resources", "Misc", "Links", "Stuff", "Reading", "Tech".
 - Genuine one-offs that fit nowhere may go in a folder named "${FALLBACK_UNSORTED}".
-- Every bookmark number from 1 to ${links.length} must appear EXACTLY ONCE across all folders.
+- Every bookmark number from 1 to ${links.length} must appear EXACTLY ONCE across all folders.${titleRules}
 
 Return ONLY valid JSON in this shape:
-{"folders":[{"folderName":"<name>","linkIndexes":[1,2,3]}]}`;
+${responseShape}`;
 
   const completion = await groq.chat.completions.create({
     model: getModel(),
@@ -335,6 +358,7 @@ Return ONLY valid JSON in this shape:
 
   const parsed = JSON.parse(raw) as {
     folders?: { folderName?: string; linkIndexes?: unknown }[];
+    titles?: unknown;
   };
   if (!Array.isArray(parsed.folders)) {
     throw new Error("AI returned an unexpected shape for the re-cluster");
@@ -344,7 +368,7 @@ Return ONLY valid JSON in this shape:
   // in-range indexes, first assignment wins, and let the caller decide what to
   // do with anything left unassigned.
   const seen = new Set<number>();
-  const out: ReclusterFolder[] = [];
+  const folders: ReclusterFolder[] = [];
 
   // cleanGroupName() clips to 4 words, which would mangle a longer existing
   // folder the model correctly asked to reuse. Match those verbatim first.
@@ -367,8 +391,20 @@ Return ONLY valid JSON in this shape:
       linkIndexes.push(n);
     }
 
-    if (linkIndexes.length) out.push({ folderName: name, linkIndexes });
+    if (linkIndexes.length) folders.push({ folderName: name, linkIndexes });
   }
 
-  return out;
+  const titles = new Map<number, string>();
+  if (withTitles && parsed.titles && typeof parsed.titles === "object") {
+    for (const [key, value] of Object.entries(
+      parsed.titles as Record<string, unknown>,
+    )) {
+      const n = Number(key);
+      if (!Number.isInteger(n) || n < 1 || n > links.length) continue;
+      const title = cleanLinkTitle(typeof value === "string" ? value : null);
+      if (title) titles.set(n, title);
+    }
+  }
+
+  return { folders, titles };
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  addLinkAction,
+  addLinksAction,
   createGroupAndMoveLinksAction,
   deleteGroupAction,
   moveLinksToGroupAction,
@@ -13,7 +13,7 @@ import {
 import { UNCATEGORIZED_FOLDER_NAME } from "@/lib/links";
 import type { Group, Link } from "@prisma/client";
 import { AnimatePresence } from "framer-motion";
-import { Loader2, Search, Sparkles } from "lucide-react";
+import { AlertCircle, Check, Loader2, Search, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AddLinkInput } from "@/components/AddLinkInput";
@@ -21,11 +21,11 @@ import {
   AddLinkStatusBar,
   type AddLinkBarState,
 } from "@/components/AddLinkStatusBar";
-import { CopiedToast } from "@/components/CopiedToast";
-import { FolderRegeneratedToast } from "@/components/FolderRegeneratedToast";
+import { DockToast, type ToastState } from "@/components/DockToast";
 import { FolderSidebar } from "@/components/FolderSidebar";
 import { LinkCard } from "@/components/LinkCard";
 import { SelectionBar } from "@/components/SelectionBar";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export type GroupWithLinks = Group & { links: Link[] };
 
@@ -35,19 +35,36 @@ type Props = {
 
 type Row = { link: Link; group: Group };
 
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n !== 1 ? "s" : ""}`;
+}
+
 export function LinkBoard({ groups }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [linkAddBar, setLinkAddBar] = useState<AddLinkBarState | null>(null);
-  const [copiedToast, setCopiedToast] = useState(false);
-  const copiedToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeFilter, setActiveFilter] = useState("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
-  const [banner, setBanner] = useState<string | null>(null);
-  const [regeneratingFolderId, setRegeneratingFolderId] = useState<string | null>(null);
-  const [showRegeneratedToast, setShowRegeneratedToast] = useState(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [regeneratingFolderId, setRegeneratingFolderId] = useState<
+    string | null
+  >(null);
   const [organizing, setOrganizing] = useState(false);
+  const toastSeq = useRef(0);
+
+  // Every notification is the same dock bar now, so one piece of state covers
+  // copy confirmations, AI results, and errors alike.
+  function showToast(next: Omit<ToastState, "id">) {
+    toastSeq.current += 1;
+    setToast({ ...next, id: toastSeq.current });
+  }
+
+  function showError(message: string) {
+    // No ttl: errors are usually actionable ("GROQ_API_KEY is not set"), so they
+    // wait for the close button rather than vanishing mid-read.
+    showToast({ icon: AlertCircle, title: message, tone: "error" });
+  }
 
   const uncategorizedId = useMemo(
     () => groups.find((g) => g.name === UNCATEGORIZED_FOLDER_NAME)?.id,
@@ -125,42 +142,61 @@ export function LinkBoard({ groups }: Props) {
   }, [linkAddBar]);
 
   useEffect(() => {
-    return () => {
-      if (copiedToastTimerRef.current) clearTimeout(copiedToastTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!showRegeneratedToast) return;
-    const t = window.setTimeout(() => setShowRegeneratedToast(false), 2500);
+    if (!toast?.ttl) return;
+    const id = toast.id;
+    const t = window.setTimeout(() => {
+      setToast((cur) => (cur?.id === id ? null : cur));
+    }, toast.ttl);
     return () => clearTimeout(t);
-  }, [showRegeneratedToast]);
+  }, [toast]);
 
   function notifyLinkCopied() {
-    setCopiedToast(true);
-    if (copiedToastTimerRef.current) clearTimeout(copiedToastTimerRef.current);
-    copiedToastTimerRef.current = setTimeout(() => setCopiedToast(false), 2000);
+    showToast({ icon: Check, title: "Copied", ttl: 2000 });
   }
 
-  async function handleAddLink(url: string): Promise<boolean> {
-    const preview = url.length > 72 ? `${url.slice(0, 72)}…` : url;
-    setLinkAddBar({ kind: "adding", url: preview });
-    setBanner(null);
-    const res = await addLinkAction(url);
+  async function handleAddLinks(urls: string[]): Promise<boolean> {
+    const many = urls.length > 1;
+    const preview = urls[0].length > 72 ? `${urls[0].slice(0, 72)}…` : urls[0];
+
+    setLinkAddBar(
+      many
+        ? {
+            kind: "adding",
+            title: `Saving ${plural(urls.length, "link")}…`,
+            detail: "Reading titles, then sorting them into folders",
+          }
+        : { kind: "adding", title: "Saving link…", detail: preview },
+    );
+    setToast(null);
+
+    const res = await addLinksAction(urls);
     if (!res.ok) {
       setLinkAddBar({ kind: "error", message: res.error });
       return false;
     }
-    // The link saved either way, but if the AI leg failed say so loudly rather
+
+    const data = res.data;
+    // The links saved either way, but if the AI leg failed say so loudly rather
     // than reporting a cheerful "Added to Uncategorized".
-    if (res.data?.warning) {
-      setLinkAddBar({ kind: "error", message: res.data.warning });
-    } else {
+    if (data?.warning) {
+      setLinkAddBar({ kind: "error", message: data.warning });
+    } else if (data) {
+      const where =
+        data.folders.length === 1
+          ? data.folders[0]
+          : plural(data.folders.length, "folder");
       setLinkAddBar({
         kind: "success",
-        folderName: res.data?.groupName ?? "Folder",
+        title:
+          data.added === 1
+            ? `Added to ${where}`
+            : `Added ${plural(data.added, "link")} to ${where}`,
+        detail: data.skipped.length
+          ? `${plural(data.skipped.length, "link")} skipped`
+          : undefined,
       });
     }
+
     startTransition(() => {
       router.refresh();
     });
@@ -180,23 +216,29 @@ export function LinkBoard({ groups }: Props) {
     options: { linkIds?: string[]; groupId?: string },
     onSuccess?: () => void,
   ) {
-    setBanner(null);
+    setToast(null);
     setOrganizing(true);
     startTransition(async () => {
       const res = await reorganizeLinksAction(options);
       setOrganizing(false);
       if (!res.ok) {
-        setBanner(res.error ?? "Could not reorganize links");
+        showError(res.error ?? "Could not reorganize links");
         return;
       }
       const s = res.data;
       if (s) {
-        const links = `${s.linkCount} link${s.linkCount !== 1 ? "s" : ""}`;
-        const folders = `${s.folders.length} folder${s.folders.length !== 1 ? "s" : ""}`;
-        const extra = s.unassigned
-          ? ` ${s.unassigned} couldn't be placed and stayed put.`
-          : "";
-        setBanner(`Organized ${links} into ${folders}.${extra}`);
+        const stranded = s.unassigned
+          ? `${plural(s.unassigned, "link")} stayed put — nowhere obvious to file them`
+          : undefined;
+        showToast({
+          icon: Sparkles,
+          title: `Organized ${plural(s.linkCount, "link")} into ${plural(
+            s.folders.length,
+            "folder",
+          )}`,
+          detail: stranded,
+          ttl: 5000,
+        });
       }
       onSuccess?.();
       router.refresh();
@@ -204,11 +246,11 @@ export function LinkBoard({ groups }: Props) {
   }
 
   function runAction(fn: () => Promise<{ ok: boolean; error?: string }>) {
-    setBanner(null);
+    setToast(null);
     startTransition(async () => {
       const res = await fn();
       if (!res.ok) {
-        setBanner("error" in res ? res.error ?? "Something went wrong" : "Something went wrong");
+        showError(res.error ?? "Something went wrong");
         return;
       }
       router.refresh();
@@ -218,26 +260,22 @@ export function LinkBoard({ groups }: Props) {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-6 py-6">
-        <div className="mb-5 flex items-baseline justify-between">
-          <h1 className="text-base font-semibold text-foreground lowercase">
+        <div className="mb-5 flex items-center justify-between">
+          <h1 className="text-base font-semibold lowercase text-foreground">
             stash
           </h1>
-          <p className="text-xs text-muted-foreground">Paste, organize, find.</p>
-        </div>
-
-        {banner && (
-          <div
-            className="mb-4 rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground"
-            role="alert"
-          >
-            {banner}
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted-foreground">
+              Paste, organize, find.
+            </p>
+            <ThemeToggle />
           </div>
-        )}
+        </div>
 
         <div className="mb-5">
           <AddLinkInput
             disabled={linkAddBar?.kind === "adding"}
-            onAdd={handleAddLink}
+            onAdd={handleAddLinks}
           />
         </div>
 
@@ -255,16 +293,20 @@ export function LinkBoard({ groups }: Props) {
                 })
               }
               onRegenerateFolder={(id) => {
-                setBanner(null);
+                setToast(null);
                 setRegeneratingFolderId(id);
                 startTransition(async () => {
                   const res = await regenerateGroupTitleAction(id);
                   setRegeneratingFolderId(null);
                   if (!res.ok) {
-                    setBanner(res.error ?? "Could not regenerate folder title");
+                    showError(res.error ?? "Could not regenerate folder title");
                     return;
                   }
-                  setShowRegeneratedToast(true);
+                  showToast({
+                    icon: Sparkles,
+                    title: "Folder title regenerated",
+                    ttl: 2500,
+                  });
                   router.refresh();
                 });
               }}
@@ -301,7 +343,7 @@ export function LinkBoard({ groups }: Props) {
                           : effectiveFilter,
                     })
                   }
-                  className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground disabled:opacity-50"
                   title={
                     effectiveFilter === "uncategorized"
                       ? "Sort these into folders with AI"
@@ -321,7 +363,7 @@ export function LinkBoard({ groups }: Props) {
                 </button>
               )}
               <span className="text-xs tabular-nums text-muted-foreground">
-                {rows.length} link{rows.length !== 1 ? "s" : ""}
+                {plural(rows.length, "link")}
               </span>
             </div>
 
@@ -368,7 +410,9 @@ export function LinkBoard({ groups }: Props) {
                       folderId || null,
                     );
                     if (res.ok) setSelectedIds(new Set());
-                    return res.ok ? { ok: true } : { ok: false, error: res.error };
+                    return res.ok
+                      ? { ok: true }
+                      : { ok: false, error: res.error };
                   })
                 }
                 onCreateFolderAndMove={(name) =>
@@ -378,7 +422,9 @@ export function LinkBoard({ groups }: Props) {
                       Array.from(selectedIds),
                     );
                     if (res.ok) setSelectedIds(new Set());
-                    return res.ok ? { ok: true } : { ok: false, error: res.error };
+                    return res.ok
+                      ? { ok: true }
+                      : { ok: false, error: res.error };
                   })
                 }
                 onOrganize={() =>
@@ -391,7 +437,9 @@ export function LinkBoard({ groups }: Props) {
                   runAction(async () => {
                     const res = await removeLinksAction(Array.from(selectedIds));
                     if (res.ok) setSelectedIds(new Set());
-                    return res.ok ? { ok: true } : { ok: false, error: res.error };
+                    return res.ok
+                      ? { ok: true }
+                      : { ok: false, error: res.error };
                   })
                 }
                 onClear={() => setSelectedIds(new Set())}
@@ -418,10 +466,13 @@ export function LinkBoard({ groups }: Props) {
             )}
           </AnimatePresence>
           <AnimatePresence>
-            {copiedToast && <CopiedToast key="copied-toast" />}
-          </AnimatePresence>
-          <AnimatePresence>
-            {showRegeneratedToast && <FolderRegeneratedToast key="folder-regenerated-toast" />}
+            {toast && (
+              <DockToast
+                key={`toast-${toast.id}`}
+                toast={toast}
+                onDismiss={() => setToast(null)}
+              />
+            )}
           </AnimatePresence>
         </div>
       </div>

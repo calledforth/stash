@@ -73,7 +73,9 @@ export async function reorganizeLinks(
         .map((g) => g.name)
     : [];
 
-  const proposals = await reclusterLinks(links, { existingFolders });
+  const { folders: proposals } = await reclusterLinks(links, {
+    existingFolders,
+  });
 
   const byName = new Map(allGroups.map((g) => [g.name.toLowerCase(), g]));
   const sourceGroupIds = new Set(links.map((l) => l.groupId));

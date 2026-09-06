@@ -6,6 +6,7 @@ import {
   categorizeLink,
   describeAiError,
   nameNewGroupFromLinks,
+  reclusterLinks,
   regenerateGroupTitle as aiRegenerateGroupTitle,
 } from "@/lib/ai";
 import { fetchLinkMetadata, normalizeUrl } from "@/lib/metadata";
@@ -120,6 +121,218 @@ export async function addLinkAction(
   return {
     ok: true,
     data: { id: link.id, groupName: group?.name ?? "Folder", warning },
+  };
+}
+
+export type AddLinksSummary = {
+  added: number;
+  /** Folder names the batch landed in, most-populated first. */
+  folders: string[];
+  skipped: { url: string; reason: string }[];
+  warning?: string;
+};
+
+/** Pasting a wall of URLs still has to finish inside the function timeout. */
+const MAX_BATCH = 50;
+const METADATA_CONCURRENCY = 12;
+// Tighter than the 12s single-link budget: one slow site shouldn't eat the
+// whole batch's time while 40 others wait behind it.
+const BATCH_METADATA_TIMEOUT_MS = 6_000;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (cursor < items.length) {
+        const i = cursor++;
+        out[i] = await fn(items[i]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * Add several links at once.
+ *
+ * A single URL keeps the existing one-link path, which sees every folder id and
+ * can pick or invent precisely. Beyond that it saves all the links first, then
+ * files them with ONE re-cluster call — running `categorizeLink` per URL would
+ * mean N round trips, each judging against a folder list the others are
+ * concurrently changing, which reliably spawns near-duplicate folders.
+ */
+export async function addLinksAction(
+  rawUrls: string[],
+): Promise<ActionResult<AddLinksSummary>> {
+  const skipped: { url: string; reason: string }[] = [];
+  const seen = new Set<string>();
+  const urls: string[] = [];
+
+  for (const raw of rawUrls) {
+    const url = normalizeUrl(raw);
+    if (!url) {
+      skipped.push({ url: raw, reason: "Invalid URL" });
+      continue;
+    }
+    // A duplicate inside one paste is a typo, not something worth reporting.
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+
+  if (!urls.length) {
+    return {
+      ok: false,
+      error: skipped.length ? "No valid URLs found" : "Nothing to add",
+    };
+  }
+  if (urls.length > MAX_BATCH) {
+    return {
+      ok: false,
+      error: `Too many links at once (${urls.length}). Add up to ${MAX_BATCH} at a time.`,
+    };
+  }
+
+  if (urls.length === 1) {
+    const res = await addLinkAction(urls[0]);
+    if (!res.ok) return { ok: false, error: res.error };
+    return {
+      ok: true,
+      data: {
+        added: 1,
+        folders: [res.data?.groupName ?? "Folder"],
+        skipped,
+        warning: res.data?.warning,
+      },
+    };
+  }
+
+  const existingLinks = await prisma.link.findMany({
+    where: { url: { in: urls } },
+    select: { url: true },
+  });
+  const alreadySaved = new Set(existingLinks.map((l) => l.url));
+  const fresh = urls.filter((u) => {
+    if (!alreadySaved.has(u)) return true;
+    skipped.push({ url: u, reason: "Already saved" });
+    return false;
+  });
+
+  if (!fresh.length) {
+    return { ok: false, error: "All of those links are already saved" };
+  }
+
+  const metas = await mapWithConcurrency(fresh, METADATA_CONCURRENCY, (url) =>
+    fetchLinkMetadata(url, { timeoutMs: BATCH_METADATA_TIMEOUT_MS }),
+  );
+
+  // Land everything in Uncategorized first. If the AI leg then fails the links
+  // are still saved and "Categorize all" can finish the job — nothing is lost.
+  const landingGroupId = await ensureUncategorizedGroupId();
+  const created = await mapWithConcurrency(
+    fresh.map((url, i) => ({ url, meta: metas[i] })),
+    METADATA_CONCURRENCY,
+    async ({ url, meta }) =>
+      prisma.link.create({
+        data: {
+          url,
+          title: meta.title,
+          description: meta.description,
+          faviconUrl: meta.faviconUrl,
+          groupId: landingGroupId,
+          titleSource: "metadata",
+        },
+        select: { id: true, url: true, title: true, description: true },
+      }),
+  );
+
+  let warning: string | undefined;
+  const folderCounts = new Map<string, number>();
+
+  if (!process.env.GROQ_API_KEY?.trim()) {
+    warning = "GROQ_API_KEY is not set — saved without AI categorization.";
+  } else {
+    try {
+      const groups = await prisma.group.findMany({
+        select: { id: true, name: true },
+      });
+      const existingFolders = groups
+        .filter((g) => g.name !== UNCATEGORIZED_FOLDER_NAME)
+        .map((g) => g.name);
+
+      const { folders, titles } = await reclusterLinks(created, {
+        existingFolders,
+        withTitles: true,
+      });
+
+      const byName = new Map(groups.map((g) => [g.name.toLowerCase(), g]));
+      for (const folder of folders) {
+        const ids = folder.linkIndexes
+          .map((n) => created[n - 1]?.id)
+          .filter((id): id is string => Boolean(id));
+        if (!ids.length) continue;
+
+        const key = folder.folderName.toLowerCase();
+        let group = byName.get(key);
+        if (!group) {
+          group = await prisma.group.create({
+            data: { name: folder.folderName },
+            select: { id: true, name: true },
+          });
+          byName.set(key, group);
+        }
+
+        await prisma.link.updateMany({
+          where: { id: { in: ids } },
+          data: { groupId: group.id },
+        });
+        await prisma.group.update({
+          where: { id: group.id },
+          data: { updatedAt: new Date() },
+        });
+        folderCounts.set(
+          group.name,
+          (folderCounts.get(group.name) ?? 0) + ids.length,
+        );
+      }
+
+      // Titles ride back on the same completion, so AI-named links are free.
+      await Promise.all(
+        [...titles].map(([index, title]) => {
+          const link = created[index - 1];
+          if (!link) return null;
+          return prisma.link.update({
+            where: { id: link.id },
+            data: { title, titleSource: "ai" },
+          });
+        }),
+      );
+    } catch (e) {
+      warning = `Saved, but AI categorization failed: ${describeAiError(e)}`;
+    }
+  }
+
+  revalidatePath("/");
+
+  const folderNames = [...folderCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name);
+
+  return {
+    ok: true,
+    data: {
+      added: created.length,
+      folders: folderNames.length ? folderNames : [UNCATEGORIZED_FOLDER_NAME],
+      skipped,
+      warning,
+    },
   };
 }
 
