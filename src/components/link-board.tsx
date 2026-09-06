@@ -8,11 +8,12 @@ import {
   removeLinksAction,
   regenerateGroupTitleAction,
   renameGroupAction,
+  reorganizeLinksAction,
 } from "@/app/actions";
 import { UNCATEGORIZED_FOLDER_NAME } from "@/lib/links";
 import type { Group, Link } from "@prisma/client";
 import { AnimatePresence } from "framer-motion";
-import { Search } from "lucide-react";
+import { Loader2, Search, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { AddLinkInput } from "@/components/AddLinkInput";
@@ -46,6 +47,7 @@ export function LinkBoard({ groups }: Props) {
   const [banner, setBanner] = useState<string | null>(null);
   const [regeneratingFolderId, setRegeneratingFolderId] = useState<string | null>(null);
   const [showRegeneratedToast, setShowRegeneratedToast] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
 
   const uncategorizedId = useMemo(
     () => groups.find((g) => g.name === UNCATEGORIZED_FOLDER_NAME)?.id,
@@ -82,15 +84,28 @@ export function LinkBoard({ groups }: Props) {
     return counts;
   }, [groups, totalLinkCount, uncategorizedId]);
 
+  // Reorganizing can dissolve the folder being viewed, and the Uncategorized row
+  // hides itself once it hits zero — either would strand the view on a filter
+  // that no longer exists. Resolve it during render rather than correcting it
+  // afterwards in an effect.
+  const effectiveFilter = useMemo(() => {
+    if (activeFilter === "all") return "all";
+    const stillExists =
+      activeFilter === "uncategorized"
+        ? folderCounts.uncategorized > 0
+        : groups.some((g) => g.id === activeFilter);
+    return stillExists ? activeFilter : "all";
+  }, [activeFilter, folderCounts.uncategorized, groups]);
+
   const rows: Row[] = useMemo(() => {
     let list: Row[] = groups.flatMap((g) =>
       g.links.map((link) => ({ link, group: g })),
     );
-    if (activeFilter === "uncategorized") {
+    if (effectiveFilter === "uncategorized") {
       if (!uncategorizedId) list = [];
       else list = list.filter((x) => x.group.id === uncategorizedId);
-    } else if (activeFilter !== "all") {
-      list = list.filter((x) => x.group.id === activeFilter);
+    } else if (effectiveFilter !== "all") {
+      list = list.filter((x) => x.group.id === effectiveFilter);
     }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
@@ -101,7 +116,7 @@ export function LinkBoard({ groups }: Props) {
       );
     }
     return list;
-  }, [groups, activeFilter, search, uncategorizedId]);
+  }, [groups, effectiveFilter, search, uncategorizedId]);
 
   useEffect(() => {
     if (!linkAddBar || linkAddBar.kind === "adding") return;
@@ -136,10 +151,16 @@ export function LinkBoard({ groups }: Props) {
       setLinkAddBar({ kind: "error", message: res.error });
       return false;
     }
-    setLinkAddBar({
-      kind: "success",
-      folderName: res.data?.groupName ?? "Folder",
-    });
+    // The link saved either way, but if the AI leg failed say so loudly rather
+    // than reporting a cheerful "Added to Uncategorized".
+    if (res.data?.warning) {
+      setLinkAddBar({ kind: "error", message: res.data.warning });
+    } else {
+      setLinkAddBar({
+        kind: "success",
+        folderName: res.data?.groupName ?? "Folder",
+      });
+    }
     startTransition(() => {
       router.refresh();
     });
@@ -152,6 +173,33 @@ export function LinkBoard({ groups }: Props) {
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
+    });
+  }
+
+  function runOrganize(
+    options: { linkIds?: string[]; groupId?: string },
+    onSuccess?: () => void,
+  ) {
+    setBanner(null);
+    setOrganizing(true);
+    startTransition(async () => {
+      const res = await reorganizeLinksAction(options);
+      setOrganizing(false);
+      if (!res.ok) {
+        setBanner(res.error ?? "Could not reorganize links");
+        return;
+      }
+      const s = res.data;
+      if (s) {
+        const links = `${s.linkCount} link${s.linkCount !== 1 ? "s" : ""}`;
+        const folders = `${s.folders.length} folder${s.folders.length !== 1 ? "s" : ""}`;
+        const extra = s.unassigned
+          ? ` ${s.unassigned} couldn't be placed and stayed put.`
+          : "";
+        setBanner(`Organized ${links} into ${folders}.${extra}`);
+      }
+      onSuccess?.();
+      router.refresh();
     });
   }
 
@@ -197,7 +245,7 @@ export function LinkBoard({ groups }: Props) {
           <div className="w-56 shrink-0">
             <FolderSidebar
               folders={sidebarFolders}
-              activeFilter={activeFilter}
+              activeFilter={effectiveFilter}
               onFilterChange={setActiveFilter}
               folderCounts={folderCounts}
               onRenameFolder={(id, name) =>
@@ -241,6 +289,37 @@ export function LinkBoard({ groups }: Props) {
                 placeholder="Search links..."
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
               />
+              {effectiveFilter !== "all" && (
+                <button
+                  type="button"
+                  disabled={organizing}
+                  onClick={() =>
+                    runOrganize({
+                      groupId:
+                        effectiveFilter === "uncategorized"
+                          ? uncategorizedId
+                          : effectiveFilter,
+                    })
+                  }
+                  className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  title={
+                    effectiveFilter === "uncategorized"
+                      ? "Sort these into folders with AI"
+                      : "Re-file these links with AI"
+                  }
+                >
+                  {organizing ? (
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                  ) : (
+                    <Sparkles className="h-3 w-3" aria-hidden />
+                  )}
+                  {organizing
+                    ? "Organizing…"
+                    : effectiveFilter === "uncategorized"
+                      ? "Categorize all"
+                      : "Reorganize"}
+                </button>
+              )}
               <span className="text-xs tabular-nums text-muted-foreground">
                 {rows.length} link{rows.length !== 1 ? "s" : ""}
               </span>
@@ -302,6 +381,12 @@ export function LinkBoard({ groups }: Props) {
                     return res.ok ? { ok: true } : { ok: false, error: res.error };
                   })
                 }
+                onOrganize={() =>
+                  runOrganize({ linkIds: Array.from(selectedIds) }, () =>
+                    setSelectedIds(new Set()),
+                  )
+                }
+                organizing={organizing}
                 onRemove={() =>
                   runAction(async () => {
                     const res = await removeLinksAction(Array.from(selectedIds));

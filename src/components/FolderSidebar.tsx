@@ -1,6 +1,7 @@
 "use client";
 
 import type { Folder } from "@/lib/links-types";
+import { UNCATEGORIZED_FOLDER_NAME } from "@/lib/links";
 import { FolderIcon, Inbox, Layers, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 
@@ -41,6 +42,9 @@ export function FolderSidebar({
     setEditingId(null);
   }
 
+  // Uncategorized is a failure state, not a permanent home — everything the AI
+  // touches lands in a real folder. Only surface it when something is actually
+  // sitting there, instead of a row that reads 0 forever.
   const items = [
     {
       id: "all",
@@ -48,12 +52,16 @@ export function FolderSidebar({
       icon: Layers,
       count: folderCounts.all,
     },
-    {
-      id: "uncategorized",
-      label: "Uncategorized",
-      icon: Inbox,
-      count: folderCounts.uncategorized,
-    },
+    ...(folderCounts.uncategorized > 0
+      ? [
+          {
+            id: "uncategorized",
+            label: UNCATEGORIZED_FOLDER_NAME,
+            icon: Inbox,
+            count: folderCounts.uncategorized,
+          },
+        ]
+      : []),
   ];
 
   return (

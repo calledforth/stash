@@ -1,7 +1,10 @@
 import Groq from "groq-sdk";
 import type { Group, Link } from "@prisma/client";
+import { UNCATEGORIZED_FOLDER_NAME as FALLBACK_UNSORTED } from "@/lib/links";
 
-const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+// llama-3.3-70b-versatile was decommissioned by Groq on 2026-08-16; requests to it
+// fail with `model_decommissioned`. gpt-oss-120b is Groq's recommended replacement.
+const DEFAULT_MODEL = "openai/gpt-oss-120b";
 
 function getModel(): string {
   return process.env.GROQ_MODEL?.trim() || DEFAULT_MODEL;
@@ -53,6 +56,28 @@ function getGroq(): Groq | null {
   const key = process.env.GROQ_API_KEY;
   if (!key?.trim()) return null;
   return new Groq({ apiKey: key });
+}
+
+/**
+ * Turn a Groq SDK failure into something a human can act on. The silent
+ * `catch {}` that used to wrap these calls is why a decommissioned model went
+ * unnoticed for weeks — every error now has to reach the UI.
+ */
+export function describeAiError(e: unknown): string {
+  const err = e as {
+    status?: number;
+    message?: string;
+    error?: { error?: { code?: string; message?: string } };
+  };
+  const code = err?.error?.error?.code;
+  const detail = err?.error?.error?.message ?? err?.message;
+
+  if (code === "model_decommissioned" || code === "model_not_found") {
+    return `Groq model "${getModel()}" is unavailable (${code}). Set GROQ_MODEL to a supported model.`;
+  }
+  if (err?.status === 401) return "Groq rejected the API key (401). Check GROQ_API_KEY.";
+  if (err?.status === 429) return "Groq rate limit hit (429). Try again in a moment.";
+  return detail || "AI request failed";
 }
 
 export type CategorizeResult =
@@ -220,4 +245,130 @@ Return ONLY valid JSON: {"groupName":"<name>"}`;
   const name = cleanGroupName(parsed.groupName);
   if (name) return name;
   return groupName;
+}
+
+
+export type ReclusterFolder = { folderName: string; linkIndexes: number[] };
+
+/**
+ * Re-cluster a set of links in one shot. Links are addressed by 1-based index
+ * instead of cuid so the model has far less to copy verbatim (and far less to
+ * hallucinate).
+ *
+ * Two modes:
+ * - no `existingFolders` (global recluster): design a taxonomy from scratch,
+ *   ignoring whatever organization is already there.
+ * - with `existingFolders` (scoped run, e.g. "organize Uncategorized"): file the
+ *   links into the folders that already exist, only inventing new ones when
+ *   nothing fits. Otherwise sorting 5 stray links would spawn 5 new near-
+ *   duplicate folders alongside the real ones.
+ */
+export async function reclusterLinks(
+  links: Pick<Link, "url" | "title" | "description">[],
+  options: { existingFolders?: string[] } = {},
+): Promise<ReclusterFolder[]> {
+  const groq = getGroq();
+  if (!groq) throw new Error("GROQ_API_KEY is not set");
+  if (!links.length) return [];
+
+  const existing = (options.existingFolders ?? []).filter(
+    (n) => n && n !== FALLBACK_UNSORTED,
+  );
+  const scoped = existing.length > 0;
+
+  const lines = links
+    .map((l, i) => {
+      const title = l.title?.trim() || "(untitled)";
+      const desc = l.description?.trim()?.slice(0, 160);
+      const head = `${i + 1}. ${title} — ${l.url}`;
+      return desc ? `${head}\n   ${desc}` : head;
+    })
+    .join("\n");
+
+  const intro = scoped
+    ? `You are an expert bookmark librarian filing loose bookmarks into an existing library.
+
+These folders already exist — reuse them wherever a bookmark plausibly belongs:
+${existing.map((n) => `- ${n}`).join("\n")}`
+    : `You are an expert bookmark librarian reorganizing an entire library from scratch.
+
+Design the folder structure you would use if you were starting fresh. Ignore any
+existing organization — you are replacing it.`;
+
+  const modeRules = scoped
+    ? `- Strongly prefer an existing folder from the list above. Reuse its name EXACTLY.
+- Only invent a new folder when a bookmark is clearly off-topic for every existing one.
+- Do not create a new folder that is a near-duplicate of an existing one.`
+    : `- Aim for folders of roughly 3+ bookmarks. Prefer a smaller number of meaningful
+  folders over many near-duplicate ones. Merge topics that clearly overlap.`;
+
+  const prompt = `${intro}
+
+Below are ${links.length} bookmarks, numbered 1 to ${links.length}.
+
+Bookmarks:
+${lines}
+
+Rules:
+- Group by what the bookmark is ABOUT, never by the platform hosting it.
+  YouTube videos about Rust belong with Rust articles, not in a "YouTube" folder.
+${modeRules}
+- New folder names: 2-4 words, Title Case, specific enough that someone could guess
+  the contents from the name alone.
+- Avoid vague names like "Resources", "Misc", "Links", "Stuff", "Reading", "Tech".
+- Genuine one-offs that fit nowhere may go in a folder named "${FALLBACK_UNSORTED}".
+- Every bookmark number from 1 to ${links.length} must appear EXACTLY ONCE across all folders.
+
+Return ONLY valid JSON in this shape:
+{"folders":[{"folderName":"<name>","linkIndexes":[1,2,3]}]}`;
+
+  const completion = await groq.chat.completions.create({
+    model: getModel(),
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.2,
+    response_format: { type: "json_object" },
+  });
+
+  const raw = completion.choices[0]?.message?.content;
+  if (!raw) throw new Error("Empty Groq response");
+  logModelOutput("reclusterLinks", raw);
+
+  const parsed = JSON.parse(raw) as {
+    folders?: { folderName?: string; linkIndexes?: unknown }[];
+  };
+  if (!Array.isArray(parsed.folders)) {
+    throw new Error("AI returned an unexpected shape for the re-cluster");
+  }
+
+  // Defensive pass: the model can repeat, invent, or drop indexes. Keep only
+  // in-range indexes, first assignment wins, and let the caller decide what to
+  // do with anything left unassigned.
+  const seen = new Set<number>();
+  const out: ReclusterFolder[] = [];
+
+  // cleanGroupName() clips to 4 words, which would mangle a longer existing
+  // folder the model correctly asked to reuse. Match those verbatim first.
+  const existingByKey = new Map(
+    [...existing, FALLBACK_UNSORTED].map((n) => [n.trim().toLowerCase(), n]),
+  );
+
+  for (const folder of parsed.folders) {
+    const proposed = folder?.folderName?.trim() ?? "";
+    const name =
+      existingByKey.get(proposed.toLowerCase()) ?? cleanGroupName(proposed);
+    const rawIndexes = Array.isArray(folder?.linkIndexes) ? folder.linkIndexes : [];
+    const linkIndexes: number[] = [];
+
+    for (const value of rawIndexes) {
+      const n = typeof value === "number" ? value : Number(value);
+      if (!Number.isInteger(n) || n < 1 || n > links.length) continue;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      linkIndexes.push(n);
+    }
+
+    if (linkIndexes.length) out.push({ folderName: name, linkIndexes });
+  }
+
+  return out;
 }

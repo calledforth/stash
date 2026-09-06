@@ -4,11 +4,13 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import {
   categorizeLink,
+  describeAiError,
   nameNewGroupFromLinks,
   regenerateGroupTitle as aiRegenerateGroupTitle,
 } from "@/lib/ai";
 import { fetchLinkMetadata, normalizeUrl } from "@/lib/metadata";
 import { UNCATEGORIZED_FOLDER_NAME } from "@/lib/links";
+import { reorganizeLinks, type ReorganizeSummary } from "@/lib/reorganize";
 
 async function ensureUncategorizedGroupId(): Promise<string> {
   const found = await prisma.group.findFirst({
@@ -21,20 +23,13 @@ async function ensureUncategorizedGroupId(): Promise<string> {
   return g.id;
 }
 
-async function ensureInboxGroupId(): Promise<string> {
-  const found = await prisma.group.findFirst({ where: { name: "Inbox" } });
-  if (found) return found.id;
-  const g = await prisma.group.create({ data: { name: "Inbox" } });
-  return g.id;
-}
-
 export type ActionResult<T = void> =
   | { ok: true; data?: T }
   | { ok: false; error: string };
 
 export async function addLinkAction(
   rawUrl: string,
-): Promise<ActionResult<{ id: string; groupName: string }>> {
+): Promise<ActionResult<{ id: string; groupName: string; warning?: string }>> {
   const url = normalizeUrl(rawUrl);
   if (!url) return { ok: false, error: "Invalid URL" };
 
@@ -53,8 +48,14 @@ export async function addLinkAction(
 
   const hasGroq = Boolean(process.env.GROQ_API_KEY?.trim());
 
+  // When AI categorization can't run the link still gets saved — but the reason
+  // rides back to the UI. This used to be a bare `catch {}` that quietly filed
+  // everything under "Inbox", which is how a decommissioned model went unnoticed.
+  let warning: string | undefined;
+
   if (!hasGroq) {
-    groupId = await ensureInboxGroupId();
+    warning = "GROQ_API_KEY is not set — saved without AI categorization.";
+    groupId = await ensureUncategorizedGroupId();
   } else {
     try {
       const decision = await categorizeLink({
@@ -77,8 +78,9 @@ export async function addLinkAction(
       }
       decisionTitle = decision.linkTitle;
       titleSource = "ai";
-    } catch {
-      groupId = await ensureInboxGroupId();
+    } catch (e) {
+      warning = `Saved, but AI categorization failed: ${describeAiError(e)}`;
+      groupId = await ensureUncategorizedGroupId();
     }
   }
 
@@ -117,8 +119,27 @@ export async function addLinkAction(
 
   return {
     ok: true,
-    data: { id: link.id, groupName: group?.name ?? "Folder" },
+    data: { id: link.id, groupName: group?.name ?? "Folder", warning },
   };
+}
+
+/**
+ * Re-run AI organization. No `linkIds`/`groupId` means a full re-cluster of the
+ * whole library; either one scopes it to those links.
+ */
+export async function reorganizeLinksAction(
+  options: { linkIds?: string[]; groupId?: string } = {},
+): Promise<ActionResult<ReorganizeSummary>> {
+  try {
+    const summary = await reorganizeLinks(options);
+    if (summary.linkCount === 0) {
+      return { ok: false, error: "No links to organize" };
+    }
+    revalidatePath("/");
+    return { ok: true, data: summary };
+  } catch (e) {
+    return { ok: false, error: describeAiError(e) };
+  }
 }
 
 export async function moveLinksToNewGroupAction(
@@ -143,8 +164,7 @@ export async function moveLinksToNewGroupAction(
   try {
     name = await nameNewGroupFromLinks(links);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "AI error";
-    return { ok: false, error: msg };
+    return { ok: false, error: describeAiError(e) };
   }
 
   const group = await prisma.group.create({ data: { name } });
@@ -179,8 +199,7 @@ export async function regenerateGroupTitleAction(
   try {
     name = await aiRegenerateGroupTitle(group.name, group.links);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "AI error";
-    return { ok: false, error: msg };
+    return { ok: false, error: describeAiError(e) };
   }
 
   await prisma.group.update({
