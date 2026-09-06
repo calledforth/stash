@@ -147,14 +147,14 @@ export function FolderSidebar({
                 e.stopPropagation();
                 setMenuFolderId((prev) => (prev === folder.id ? null : folder.id));
               }}
-              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               title="Folder actions"
             >
               <Pencil className="h-3 w-3" />
             </button>
             {menuFolderId === folder.id && (
               <div
-                className="absolute right-8 top-0 z-20 flex min-w-[120px] flex-col rounded-lg border border-white/10 bg-neutral-800/95 p-1 shadow-xl backdrop-blur-md"
+                className="absolute right-8 top-0 z-20 flex min-w-[120px] flex-col rounded-lg border border-border bg-popover/95 p-1 shadow-xl backdrop-blur-md"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
@@ -163,7 +163,7 @@ export function FolderSidebar({
                     setMenuFolderId(null);
                     startRename(folder);
                   }}
-                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.06] hover:text-foreground"
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 >
                   <Pencil className="h-3 w-3" />
                   Manual
@@ -175,7 +175,7 @@ export function FolderSidebar({
                     setMenuFolderId(null);
                     onRegenerateFolder(folder.id);
                   }}
-                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-neutral-300 transition-colors hover:bg-white/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Sparkles
                     className={`h-3 w-3 ${

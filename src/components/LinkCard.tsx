@@ -45,20 +45,20 @@ export const LinkCard = forwardRef<HTMLDivElement, LinkCardProps>(
         onClick={() => onToggleSelect(link.id)}
         className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-all duration-150 ${
           selected
-            ? "bg-white/[0.04] ring-1 ring-inset ring-white/10"
-            : "hover:bg-white/[0.03]"
+            ? "bg-row-active ring-1 ring-inset ring-row-active-ring"
+            : "hover:bg-row-hover"
         }`}
       >
         <div
           className={`flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded transition-all duration-150 ${
             selected
-              ? "border border-white/25 bg-accent"
-              : "border border-white/15 group-hover:border-white/30"
+              ? "border border-check-strong bg-accent"
+              : "border border-check group-hover:border-check-strong"
           }`}
         >
           {selected && (
             <svg
-              className="h-2.5 w-2.5 text-white"
+              className="h-2.5 w-2.5 text-accent-foreground"
               viewBox="0 0 10 10"
               fill="none"
               aria-hidden

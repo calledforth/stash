@@ -1,7 +1,52 @@
 @import "tailwindcss";
 
+/* Tailwind v4 keys `dark:` off `prefers-color-scheme` by default. The theme
+   toggle drives a class on <html>, so point the variant at that instead. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   /* Tailwind neutral palette only */
+  --background: #fafafa; /* neutral-50 */
+  --foreground: #171717; /* neutral-900 */
+
+  --card: #ffffff;
+  --card-foreground: #171717;
+  --popover: #ffffff;
+  --popover-foreground: #171717;
+
+  --primary: #171717;
+  --primary-foreground: #fafafa;
+
+  --secondary: #ececec;
+  --secondary-foreground: #171717;
+  --muted: #f0f0f0;
+  --muted-foreground: #737373; /* neutral-500 */
+
+  --accent: #e4e4e4;
+  --accent-foreground: #171717;
+
+  --destructive: #dc2626;
+
+  --border: #e2e2e2;
+  --input: #ffffff;
+  --ring: #a3a3a3; /* neutral-400 */
+
+  --selection: rgba(0, 0, 0, 0.05);
+  --selection-border: #d4d4d4;
+
+  --folder-tag: #ececec;
+  --folder-tag-foreground: #525252; /* neutral-600 */
+
+  /* Link rows sit directly on the page, so their hover/selected states are
+     translucent ink rather than a solid swatch — one set per theme. */
+  --row-hover: rgba(0, 0, 0, 0.035);
+  --row-active: rgba(0, 0, 0, 0.05);
+  --row-active-ring: rgba(0, 0, 0, 0.1);
+  --check: rgba(0, 0, 0, 0.2);
+  --check-strong: rgba(0, 0, 0, 0.38);
+}
+
+.dark {
   --background: #171717; /* neutral-900 */
   --foreground: #f5f5f5; /* neutral-100 */
 
@@ -32,6 +77,12 @@
 
   --folder-tag: #262626;
   --folder-tag-foreground: #d4d4d4; /* neutral-300 */
+
+  --row-hover: rgba(255, 255, 255, 0.03);
+  --row-active: rgba(255, 255, 255, 0.04);
+  --row-active-ring: rgba(255, 255, 255, 0.1);
+  --check: rgba(255, 255, 255, 0.15);
+  --check-strong: rgba(255, 255, 255, 0.3);
 }
 
 @theme inline {
@@ -57,10 +108,30 @@
   --color-selection-border: var(--selection-border);
   --color-folder-tag: var(--folder-tag);
   --color-folder-tag-foreground: var(--folder-tag-foreground);
+  --color-row-hover: var(--row-hover);
+  --color-row-active: var(--row-active);
+  --color-row-active-ring: var(--row-active-ring);
+  --color-check: var(--check);
+  --color-check-strong: var(--check-strong);
   --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+/* Browsers default <button> to the arrow cursor, which makes the dock bar read
+   as decoration. Opt every control back into the pointer in one place instead
+   of hanging `cursor-pointer` off each button. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+label[for],
+summary {
+  cursor: pointer;
+}
+
+button:disabled,
+[role="button"][aria-disabled="true"] {
+  cursor: not-allowed;
 }
