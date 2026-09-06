@@ -22,6 +22,11 @@ import { reorganizeLinks } from "@/lib/reorganize";
  * unauthenticated "reshuffle everything" URL is not something to leave open.
  */
 
+// A full re-cluster is one Groq call covering the whole library, against a
+// reasoning model — comfortably past the default serverless timeout. 60s is the
+// ceiling on Vercel's Hobby plan; raise it if you're on Pro and still hit 504s.
+export const maxDuration = 60;
+
 function isAuthorized(request: Request): boolean {
   const secret = process.env.REORGANIZE_SECRET?.trim();
   if (!secret) return false;
