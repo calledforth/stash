@@ -34,14 +34,16 @@
   --selection: rgba(0, 0, 0, 0.05);
   --selection-border: #d4d4d4;
 
-  --folder-tag: #ececec;
+  /* Translucent so the tag still reads as a pill on a selected row; a solid
+     swatch matched the selection fill and vanished into it. */
+  --folder-tag: rgba(0, 0, 0, 0.055);
   --folder-tag-foreground: #525252; /* neutral-600 */
 
   /* Link rows sit directly on the page, so their hover/selected states are
-     translucent ink rather than a solid swatch — one set per theme. */
+     translucent ink rather than a solid swatch — one set per theme. Selection
+     is fill only: an outline doubled up wherever two selected rows met. */
   --row-hover: rgba(0, 0, 0, 0.035);
-  --row-active: rgba(0, 0, 0, 0.05);
-  --row-active-ring: rgba(0, 0, 0, 0.1);
+  --row-active: rgba(0, 0, 0, 0.06);
   --check: rgba(0, 0, 0, 0.2);
   --check-strong: rgba(0, 0, 0, 0.38);
 }
@@ -75,12 +77,11 @@
   --selection: rgba(38, 38, 38, 0.85);
   --selection-border: #525252;
 
-  --folder-tag: #262626;
+  --folder-tag: rgba(255, 255, 255, 0.065);
   --folder-tag-foreground: #d4d4d4; /* neutral-300 */
 
   --row-hover: rgba(255, 255, 255, 0.03);
-  --row-active: rgba(255, 255, 255, 0.04);
-  --row-active-ring: rgba(255, 255, 255, 0.1);
+  --row-active: rgba(255, 255, 255, 0.06);
   --check: rgba(255, 255, 255, 0.15);
   --check-strong: rgba(255, 255, 255, 0.3);
 }
@@ -110,15 +111,33 @@
   --color-folder-tag-foreground: var(--folder-tag-foreground);
   --color-row-hover: var(--row-hover);
   --color-row-active: var(--row-active);
-  --color-row-active-ring: var(--row-active-ring);
   --color-check: var(--check);
   --color-check-strong: var(--check-strong);
   --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
 }
 
+/* A stable gutter stops the centred list shifting sideways when a search
+   shrinks it enough for the scrollbar to disappear. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
+}
+
+/* The board is one block — rail plus list — centred on the window as a unit.
+   Centring the list alone left a heavy left side and an empty right one; this
+   balances what the eye actually sees. `--rail` is the sidebar plus its gap to
+   the list, `--inset` the block's left edge. `100%` resolves where these are
+   used — the board and the fixed rail both span the window, so it is the same
+   width in both. */
+.board {
+  --rail: 17.5rem; /* 15.5rem sidebar + 2rem gap */
+  --gutter: 1.5rem;
+  --list: min(52rem, 100% - var(--rail) - 2 * var(--gutter));
+  --inset: max(var(--gutter), (100% - var(--rail) - var(--list)) / 2);
 }
 
 /* Browsers default <button> to the arrow cursor, which makes the dock bar read

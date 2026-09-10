@@ -10,12 +10,18 @@ type LinkCardProps = {
   link: Link & { titleSource?: string | null };
   folder?: Folder;
   selected: boolean;
+  /** The row above / below is selected too, so the two fills merge into one. */
+  joinTop?: boolean;
+  joinBottom?: boolean;
   onToggleSelect: (id: string) => void;
   onCopied?: () => void;
 };
 
 export const LinkCard = forwardRef<HTMLDivElement, LinkCardProps>(
-  function LinkCard({ link, folder, selected, onToggleSelect, onCopied }, ref) {
+  function LinkCard(
+    { link, folder, selected, joinTop, joinBottom, onToggleSelect, onCopied },
+    ref,
+  ) {
     const title = link.title?.trim() || extractDomain(link.url);
     const [copied, setCopied] = useState(false);
     const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -43,11 +49,9 @@ export const LinkCard = forwardRef<HTMLDivElement, LinkCardProps>(
       <div
         ref={ref}
         onClick={() => onToggleSelect(link.id)}
-        className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-all duration-150 ${
-          selected
-            ? "bg-row-active ring-1 ring-inset ring-row-active-ring"
-            : "hover:bg-row-hover"
-        }`}
+        className={`group flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition-colors duration-150 ${
+          selected ? "bg-row-active" : "hover:bg-row-hover"
+        } ${joinTop ? "rounded-t-none" : ""} ${joinBottom ? "rounded-b-none" : ""}`}
       >
         <div
           className={`flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded transition-all duration-150 ${

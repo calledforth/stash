@@ -13,14 +13,14 @@ import {
 import { UNCATEGORIZED_FOLDER_NAME } from "@/lib/links";
 import type { Group, Link } from "@prisma/client";
 import { AnimatePresence } from "framer-motion";
-import { AlertCircle, Check, Loader2, Search, Sparkles } from "lucide-react";
+import { AlertCircle, Check, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { AddLinkInput } from "@/components/AddLinkInput";
 import {
   AddLinkStatusBar,
   type AddLinkBarState,
 } from "@/components/AddLinkStatusBar";
+import { CommandBar } from "@/components/CommandBar";
 import { DockToast, type ToastState } from "@/components/DockToast";
 import { FolderSidebar } from "@/components/FolderSidebar";
 import { LinkCard } from "@/components/LinkCard";
@@ -51,6 +51,9 @@ export function LinkBoard({ groups }: Props) {
     string | null
   >(null);
   const [organizing, setOrganizing] = useState(false);
+  const [organizingFolderId, setOrganizingFolderId] = useState<string | null>(
+    null,
+  );
   const toastSeq = useRef(0);
 
   // Every notification is the same dock bar now, so one piece of state covers
@@ -114,26 +117,31 @@ export function LinkBoard({ groups }: Props) {
     return stillExists ? activeFilter : "all";
   }, [activeFilter, folderCounts.uncategorized, groups]);
 
-  const rows: Row[] = useMemo(() => {
-    let list: Row[] = groups.flatMap((g) =>
+  // Split from `rows` so the command bar can say "3 of 12 links match" — the
+  // denominator is the folder you are in, not the whole library.
+  const filteredRows: Row[] = useMemo(() => {
+    const list: Row[] = groups.flatMap((g) =>
       g.links.map((link) => ({ link, group: g })),
     );
     if (effectiveFilter === "uncategorized") {
-      if (!uncategorizedId) list = [];
-      else list = list.filter((x) => x.group.id === uncategorizedId);
-    } else if (effectiveFilter !== "all") {
-      list = list.filter((x) => x.group.id === effectiveFilter);
+      if (!uncategorizedId) return [];
+      return list.filter((x) => x.group.id === uncategorizedId);
     }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = list.filter(
-        (x) =>
-          (x.link.title?.toLowerCase().includes(q) ?? false) ||
-          x.link.url.toLowerCase().includes(q),
-      );
+    if (effectiveFilter !== "all") {
+      return list.filter((x) => x.group.id === effectiveFilter);
     }
     return list;
-  }, [groups, effectiveFilter, search, uncategorizedId]);
+  }, [groups, effectiveFilter, uncategorizedId]);
+
+  const rows: Row[] = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return filteredRows;
+    return filteredRows.filter(
+      (x) =>
+        (x.link.title?.toLowerCase().includes(q) ?? false) ||
+        x.link.url.toLowerCase().includes(q),
+    );
+  }, [filteredRows, search]);
 
   useEffect(() => {
     if (!linkAddBar || linkAddBar.kind === "adding") return;
@@ -214,13 +222,14 @@ export function LinkBoard({ groups }: Props) {
 
   function runOrganize(
     options: { linkIds?: string[]; groupId?: string },
-    onSuccess?: () => void,
+    callbacks: { onSuccess?: () => void; onSettled?: () => void } = {},
   ) {
     setToast(null);
     setOrganizing(true);
     startTransition(async () => {
       const res = await reorganizeLinksAction(options);
       setOrganizing(false);
+      callbacks.onSettled?.();
       if (!res.ok) {
         showError(res.error ?? "Could not reorganize links");
         return;
@@ -240,9 +249,22 @@ export function LinkBoard({ groups }: Props) {
           ttl: 5000,
         });
       }
-      onSuccess?.();
+      callbacks.onSuccess?.();
       router.refresh();
     });
+  }
+
+  // The sidebar addresses the inbox by its filter id; the action needs the real
+  // group id behind it.
+  function handleReorganizeFolder(filterId: string) {
+    const groupId =
+      filterId === "uncategorized" ? uncategorizedId : filterId;
+    if (!groupId) return;
+    setOrganizingFolderId(filterId);
+    runOrganize(
+      { groupId },
+      { onSettled: () => setOrganizingFolderId(null) },
+    );
   }
 
   function runAction(fn: () => Promise<{ ok: boolean; error?: string }>) {
@@ -258,29 +280,23 @@ export function LinkBoard({ groups }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-6xl px-6 py-6">
-        <div className="mb-5 flex items-center justify-between">
-          <h1 className="text-base font-semibold lowercase text-foreground">
+    <>
+      {/* The page itself scrolls (not an inner div), so the wheel, Space and
+          PageDown all work without clicking first. Rail and list are centred
+          together as one block; see `.board` in globals.css for the numbers. */}
+      <div className="board">
+        {/* Fixed, not sticky: it is out of the list's flow entirely, so its
+            position never depends on how tall the list is. */}
+        <aside
+          className="fixed top-0 z-10 flex h-screen flex-col overflow-y-auto pb-6 pr-8 pt-5"
+          style={{ width: "var(--rail)", left: "var(--inset)" }}
+        >
+          <h1 className="flex h-8 shrink-0 items-center px-2.5 text-base font-semibold lowercase text-foreground">
             stash
           </h1>
-          <div className="flex items-center gap-2">
-            <p className="text-xs text-muted-foreground">
-              Paste, organize, find.
-            </p>
-            <ThemeToggle />
-          </div>
-        </div>
-
-        <div className="mb-5">
-          <AddLinkInput
-            disabled={linkAddBar?.kind === "adding"}
-            onAdd={handleAddLinks}
-          />
-        </div>
-
-        <div className="flex gap-6">
-          <div className="w-56 shrink-0">
+          {/* Starts level with the command bar, so the first filter and the
+              input read as one line across the page. */}
+          <div className="mt-3">
             <FolderSidebar
               folders={sidebarFolders}
               activeFilter={effectiveFilter}
@@ -311,6 +327,8 @@ export function LinkBoard({ groups }: Props) {
                 });
               }}
               regeneratingFolderId={regeneratingFolderId}
+              onReorganizeFolder={handleReorganizeFolder}
+              organizingFolderId={organizingFolderId}
               onDeleteFolder={(id) =>
                 runAction(async () => {
                   if (activeFilter === id) setActiveFilter("all");
@@ -320,55 +338,38 @@ export function LinkBoard({ groups }: Props) {
               }
             />
           </div>
+        </aside>
 
-          <div className="min-w-0 flex-1">
-            <div className="mb-3 flex items-center gap-2 border-b border-border pb-2">
-              <Search className="h-3.5 w-3.5 text-muted-foreground" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search links..."
-                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-              />
-              {effectiveFilter !== "all" && (
-                <button
-                  type="button"
-                  disabled={organizing}
-                  onClick={() =>
-                    runOrganize({
-                      groupId:
-                        effectiveFilter === "uncategorized"
-                          ? uncategorizedId
-                          : effectiveFilter,
-                    })
-                  }
-                  className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground disabled:opacity-50"
-                  title={
-                    effectiveFilter === "uncategorized"
-                      ? "Sort these into folders with AI"
-                      : "Re-file these links with AI"
-                  }
-                >
-                  {organizing ? (
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                  ) : (
-                    <Sparkles className="h-3 w-3" aria-hidden />
-                  )}
-                  {organizing
-                    ? "Organizing…"
-                    : effectiveFilter === "uncategorized"
-                      ? "Categorize all"
-                      : "Reorganize"}
-                </button>
-              )}
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {plural(rows.length, "link")}
-              </span>
+        <main
+          className="pb-28"
+          style={{
+            width: "var(--list)",
+            marginLeft: "calc(var(--inset) + var(--rail))",
+          }}
+        >
+          {/* No shadow under the pinned bar: its solid background already
+              hides the rows passing beneath, and anything more reads as
+              clutter. */}
+          <div className="sticky top-0 z-20 bg-background pb-2 pt-5">
+            <div className="mb-3 flex h-8 items-center justify-end gap-2">
+              <p className="text-xs text-muted-foreground">
+                Paste, organize, find.
+              </p>
+              <ThemeToggle />
             </div>
+            <CommandBar
+              disabled={linkAddBar?.kind === "adding"}
+              onAdd={handleAddLinks}
+              onSearchChange={setSearch}
+              resultCount={rows.length}
+              filteredTotal={filteredRows.length}
+            />
+          </div>
 
-            <div className="relative flex flex-col">
-              {rows.map(({ link, group }) => (
+          <div className="relative flex flex-col">
+            {rows.map(({ link, group }, i) => {
+              const selected = selectedIds.has(link.id);
+              return (
                 <LinkCard
                   key={link.id}
                   link={link}
@@ -377,22 +378,32 @@ export function LinkBoard({ groups }: Props) {
                       ? undefined
                       : { id: group.id, name: group.name }
                   }
-                  selected={selectedIds.has(link.id)}
+                  selected={selected}
+                  joinTop={
+                    selected && i > 0 && selectedIds.has(rows[i - 1].link.id)
+                  }
+                  joinBottom={
+                    selected &&
+                    i < rows.length - 1 &&
+                    selectedIds.has(rows[i + 1].link.id)
+                  }
                   onToggleSelect={toggleSelect}
                   onCopied={notifyLinkCopied}
                 />
-              ))}
-            </div>
-
-            {rows.length === 0 && (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                {totalLinkCount === 0
-                  ? "Paste your first link above to get started."
-                  : "No links match your filter."}
-              </div>
-            )}
+              );
+            })}
           </div>
-        </div>
+
+          {rows.length === 0 && (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              {totalLinkCount === 0
+                ? "Paste your first link above to get started."
+                : search.trim()
+                  ? "No links match your search."
+                  : "No links match your filter."}
+            </div>
+          )}
+        </main>
       </div>
 
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 w-full max-w-6xl -translate-x-1/2 px-4">
@@ -428,8 +439,9 @@ export function LinkBoard({ groups }: Props) {
                   })
                 }
                 onOrganize={() =>
-                  runOrganize({ linkIds: Array.from(selectedIds) }, () =>
-                    setSelectedIds(new Set()),
+                  runOrganize(
+                    { linkIds: Array.from(selectedIds) },
+                    { onSuccess: () => setSelectedIds(new Set()) },
                   )
                 }
                 organizing={organizing}
@@ -476,6 +488,6 @@ export function LinkBoard({ groups }: Props) {
           </AnimatePresence>
         </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -26,6 +26,18 @@ type SelectionBarProps = {
   onCopyAll?: () => void;
 };
 
+// Every dock action is a pill that fills in under the pointer. A colour-only
+// hover did nothing here: `card-foreground` and `foreground` are the same ink.
+// `active` holds the fill while the action's own menu is open.
+function actionClass(active = false) {
+  return `flex items-center gap-1.5 rounded-md px-2 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
+    active ? "bg-accent text-foreground" : "enabled:hover:bg-accent"
+  }`;
+}
+
+const menuItemClass =
+  "flex w-full items-center rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-accent hover:text-foreground";
+
 export function SelectionBar({
   count,
   folders,
@@ -40,7 +52,6 @@ export function SelectionBar({
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  const rootRef = useRef<HTMLDivElement>(null);
   const moveMenuRef = useRef<HTMLDivElement>(null);
   const newFolderRef = useRef<HTMLDivElement>(null);
 
@@ -61,9 +72,25 @@ export function SelectionBar({
         setShowNewFolder(false);
       }
     }
+    // Escape peels back one layer at a time: an open menu first, then the
+    // selection itself. Anything that already used the key — the command bar
+    // clearing its text, the folder menu closing — marks it handled.
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (showMoveMenu || showNewFolder) {
+        setShowMoveMenu(false);
+        setShowNewFolder(false);
+      } else {
+        onClear();
+      }
+    }
     document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [showMoveMenu, showNewFolder]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showMoveMenu, showNewFolder, onClear]);
 
   function handleCreateFolder() {
     if (newFolderName.trim()) {
@@ -75,7 +102,6 @@ export function SelectionBar({
 
   return (
     <motion.div
-      ref={rootRef}
       layout={false}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
@@ -84,9 +110,11 @@ export function SelectionBar({
       className="flex justify-center"
     >
       <div className={dockBarShell}>
-        <div className="flex items-center gap-2 px-3.5 py-2 text-xs text-card-foreground">
-          <span className="font-medium tabular-nums">{count} selected</span>
-          <div className="h-3.5 w-px bg-border" />
+        <div className="flex items-center gap-0.5 p-1 text-[13px] text-card-foreground">
+          <span className="px-2 font-medium tabular-nums">
+            {count} selected
+          </span>
+          <div className="mx-1 h-4 w-px bg-border" />
 
           {/* Move to */}
           <div className="relative" ref={moveMenuRef}>
@@ -97,18 +125,19 @@ export function SelectionBar({
                 setShowMoveMenu((v) => !v);
                 setShowNewFolder(false);
               }}
-              className="flex items-center gap-1 transition-colors hover:text-foreground"
+              aria-expanded={showMoveMenu}
+              className={actionClass(showMoveMenu)}
             >
-              <FolderInput className="h-3 w-3" />
+              <FolderInput className="h-3.5 w-3.5" />
               Move to
             </button>
             {showMoveMenu && (
               <div
-                className={`absolute bottom-full left-0 z-50 mb-2 min-w-[180px] ${dockDropdownSurface}`}
+                className={`absolute bottom-full left-0 z-50 mb-3 min-w-[200px] ${dockDropdownSurface}`}
                 onClick={(e) => e.stopPropagation()}
               >
                 {folders.length === 0 && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground italic">
+                  <div className="px-2.5 py-1.5 text-muted-foreground italic">
                     No folders yet
                   </div>
                 )}
@@ -120,7 +149,7 @@ export function SelectionBar({
                       onMoveToFolder(f.id);
                       setShowMoveMenu(false);
                     }}
-                    className="w-full px-3 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+                    className={menuItemClass}
                   >
                     {f.name}
                   </button>
@@ -132,7 +161,7 @@ export function SelectionBar({
                     onMoveToFolder("");
                     setShowMoveMenu(false);
                   }}
-                  className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  className={`${menuItemClass} text-muted-foreground`}
                 >
                   Uncategorized
                 </button>
@@ -150,13 +179,13 @@ export function SelectionBar({
               setShowNewFolder(false);
               onOrganize();
             }}
-            className="flex items-center gap-1 transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            className={actionClass()}
             title="Let the AI file these into folders"
           >
             {organizing ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
-              <Sparkles className="h-3 w-3" aria-hidden />
+              <Sparkles className="h-3.5 w-3.5" aria-hidden />
             )}
             {organizing ? "Organizing…" : "Let AI organize"}
           </button>
@@ -170,14 +199,15 @@ export function SelectionBar({
                 setShowNewFolder((v) => !v);
                 setShowMoveMenu(false);
               }}
-              className="flex items-center gap-1 transition-colors hover:text-foreground"
+              aria-expanded={showNewFolder}
+              className={actionClass(showNewFolder)}
             >
-              <FolderPlus className="h-3 w-3" />
+              <FolderPlus className="h-3.5 w-3.5" />
               New folder
             </button>
             {showNewFolder && (
               <div
-                className={`absolute bottom-full left-0 z-50 mb-2 min-w-[220px] p-2 ${dockDropdownSurface}`}
+                className={`absolute bottom-full left-0 z-50 mb-3 min-w-[240px] ${dockDropdownSurface}`}
                 onClick={(e) => e.stopPropagation()}
               >
                 <input
@@ -186,13 +216,13 @@ export function SelectionBar({
                   onChange={(e) => setNewFolderName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleCreateFolder()}
                   placeholder="Folder name…"
-                  className="w-full rounded-md bg-secondary px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground"
+                  className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 outline-none transition-colors placeholder:text-muted-foreground focus:border-ring"
                 />
                 <button
                   type="button"
                   onClick={handleCreateFolder}
                   disabled={!newFolderName.trim()}
-                  className="mt-1.5 w-full rounded-md bg-accent px-2 py-1.5 text-xs text-accent-foreground transition-colors hover:bg-accent/90 disabled:opacity-40"
+                  className="mt-1 w-full rounded-md bg-primary px-2.5 py-1.5 font-medium text-primary-foreground transition-colors enabled:hover:bg-primary/85 disabled:opacity-40"
                 >
                   Create & move
                 </button>
@@ -200,17 +230,17 @@ export function SelectionBar({
             )}
           </div>
 
-          <div className="h-3.5 w-px bg-border" />
+          <div className="mx-1 h-4 w-px bg-border" />
 
           {/* Copy all links */}
           {onCopyAll && (
             <button
               type="button"
               onClick={onCopyAll}
-              className="flex items-center gap-1 transition-colors hover:text-foreground"
+              className={actionClass()}
               title="Copy selected links"
             >
-              <ClipboardCopy className="h-3 w-3" />
+              <ClipboardCopy className="h-3.5 w-3.5" />
               Copy
             </button>
           )}
@@ -219,20 +249,22 @@ export function SelectionBar({
           <button
             type="button"
             onClick={onRemove}
-            className="flex items-center gap-1 transition-colors hover:text-destructive"
+            className="rounded-md p-1.5 outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
             title="Delete selected"
+            aria-label="Delete selected"
           >
-            <Trash2 className="h-3 w-3" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
 
           {/* Close */}
           <button
             type="button"
             onClick={onClear}
-            className="rounded-md p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Clear selection"
+            className="rounded-md p-1.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            title="Clear selection (Esc)"
+            aria-label="Clear selection"
           >
-            <X className="h-3 w-3" />
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

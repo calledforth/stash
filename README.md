@@ -4,16 +4,13 @@ Link organizer (Next.js + Prisma). See `package.json` for scripts.
 
 ## Getting Started
 
-First, run the development server:
+This project uses **pnpm** (pinned via `packageManager` in `package.json`).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env   # then fill in DATABASE_URL, GROQ_API_KEY, REORGANIZE_SECRET
+pnpm db:push           # push the Prisma schema to your database
 pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.

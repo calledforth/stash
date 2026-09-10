@@ -2,7 +2,7 @@
   "name": "stash",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "bun@1.3.10",
+  "packageManager": "pnpm@12.3.4",
   "scripts": {
     "dev": "next dev --webpack",
     "dev:turbo": "next dev --turbopack",
